@@ -1,0 +1,94 @@
+2.10 - 13th August 2017
+-----------------------
+
+* Added support for 64-bit Itanium binary depots (_64 in the depot filename)
+  as well as 32-binary depots (_32 in the depot filename). A new -b
+  option selects between 32-bit (the current default) and 64-bit
+  (a later depothelper release will switch to this as the default once
+  the majority of Itanium depots are available in 64-bit). Note that PA-RISC
+  depots will remain 32-bit only and you therefore can't use the -b flag on
+  the PA-RISC platform.
+
+* Anything involving HP-UX prior to version 11.31 will now display a
+  deprecation warning that all pre-HP-UX 11.31 packages
+  will be deleted from the archive site on 31st August 2018.
+
+* Anything involving the 32-bit Itanium platform will now display a
+  deprecation warning that all 32-bit Itanium packages will be deleted
+  from the archive site on 31st August 2018. Don't panic - we're expecting
+  to have all 32-bit Itanium depots ported to 64-bit well before that date.
+
+2.00 - 9th February 2010
+------------------------
+
+* Fixed the auto-upgrade code, which was badly broken in 1.00.
+  This means that this 2.00 release will have to be manually
+  upgraded ("depothelper depothelper" might actually do it with the
+  1.00 release of depothelper installed), but hopefully is the last
+  such release with that requirement.
+  
+* Added -u option to uninstall the specified packages (and
+  their dependencies, providing their parents aren't still
+  installed after the specified packages are uninstalled).
+
+* Changed incorrect references to Dante (which is a generic
+  SOCKS proxy) to ftpproxy (which is an FTP proxy server new
+  to the HP-UX archive).
+
+* If "-e 0" is specified (effectively disabling the download
+  cache), any depots downloaded whilst running depothelper will
+  now be deleted before the script exits.
+
+* Changed the Progress column to be separate Download and Install
+  columns, allowing just one package per line in the output.
+  When -u is supplied, the Progress column becomes a single
+  (wider) Uninstall column.
+
+* When installing a downloaded depot, any previously installed
+  depots with the same package name but a different package
+  version will be uninstalled first in oldest to newest order.
+
+* Various minor bug fixes have been applied, mainly to do with
+  the layout of the output more than anything else.
+
+1.00 - 2nd February 2010
+------------------------
+
+* Initial release.
+
+* Can choose the OS architecture and version of downloaded depots.
+
+* Can specify the directory depots are downloaded and cached to.
+
+* The cache of downloaded depots is maintained for a default of
+  3 months, but this can be overridden.
+
+* Can force download and install of depots even if seemingly unnecessary
+  (e.g. in case a package-version is reissued on the archive or there
+  was a corrupted download or install previously).
+
+* Can download depots and then not install them (e.g. you may be
+  downloading to use the depots on another HP-UX box).
+
+* Can specify an FTP proxy server and port if needed to download the
+  depots.
+
+* Can remove depots automatically after they have been downloaded and
+  installed successfully.
+
+* Auto-detects if there's a new version of depothelper available and
+  downloads and installs it, re-running the script once the new version
+  is in place.
+
+* Will warn if depothelper is removed from the HP-UX archive (suggesting
+  it's either changed its name or been removed because it's no longer
+  supported).
+
+* Will download and install any dependencies of a specified package.
+
+* Will download only exactly what is needed (i.e. it won't download a
+  package or one of its dependencies if they're in the download cache or
+  have been installed already).
+
+* Can list either all installed packages or a set of specified packages
+  (whether or not they are installed) along with their dependencies.

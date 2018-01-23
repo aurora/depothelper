@@ -1,0 +1,871 @@
+#! /usr/bin/ksh
+# depothelper (C) Connect Internet Solutions Limited 2010-2017
+# Written by Richard K. Lloyd <richard.lloyd@connectinternetsolutions.com>
+# This software is GPLv3-licensed - please see the LICENSE file
+
+export PATH=/bin:/usr/bin/:/usr/contrib/bin:$PATH
+progname="`basename $0`"
+fullprogname="`dirname $0`/$progname"
+origparams="$*"
+
+equals()
+# Output a line of equals signs with a length one less than the terminal width
+{
+   echo "=======================================================================================================================================================" | cut -c2-$cols
+}
+
+error()
+# Display error message and exit
+# $1 = Error message
+{
+   if [ $in_heading -eq 1 ]
+   then
+      equals
+   fi
+   echo "ERROR: $1 - aborted" >&2
+   exit 1
+}
+
+cant_continue()
+# Fatal error has caused script to die
+{
+   error "Can't continue - please try again later"
+}
+
+set_osver()
+# Only continue script if downloading for a supported OS
+# $1 = OS version (11.X)
+{
+   case "$1" in
+   11.11|11.23) echo "WARNING: Support for HP-UX $1 is deprecated and will end on"
+                echo "         31st August 2018. On that date, all pre-HP-UX 11.31 packages will"
+                echo "         be deleted from the http://hpux.connect.org.uk/ archive site."
+                osver="$1" ;;
+         11.31) osver="$1" ;;
+       *) error "Sorry, but HP-UX $osver is unsupported" ;;
+   esac
+}
+
+set_arch()
+# Set the machine architecture
+# $1 = Architecture (ia64 or hppa)
+{
+   case "$1" in
+   [Ii]tanium|[Ii][Aa]64) arch="ia64" ;;
+   *) arch="hppa" ;;
+   esac
+}
+
+out_progress_line()
+# Display progress line without moving onto a new line
+# $1 = Progress download status
+# $2 = Progress install  status
+# $3 != "" to add a CR
+{
+   if [ "$1" != "" ]
+   then
+      progress_download="$1"
+   fi
+   if [ "$2" != "" ]
+   then
+      progress_install="$2"
+   fi
+   if [ $uninstall -eq 1 ]
+   then
+      printf "\r%-20s %-20s %-36s" "$progress_pack" "$progress_comment" "$progress_install"
+   else
+      printf "\r%-20s %-20s %-15s %-20s" "$progress_pack" "$progress_comment" "$progress_download" "$progress_install"
+   fi
+   if [ "$3" != "" ]
+   then
+      echo
+   fi
+}
+
+ftp_file()
+# FTP (optionally using an FTP proxy) to the archive and download file
+# $1 = File relative to top-level of FTP site
+# $2 = package-version name
+# $3 = Comment
+# Returns good_dl=0 for failed download, =1 for successful one
+{
+   progress_pack="$2" ; progress_comment="$3"
+   progress_download="" ; progress_install=""
+   good_dl=0
+   if [ -d $download_dir ]
+   then
+      cd $download_dir
+      bfile=`basename $1`
+      if [ -s $bfile -a $force -eq 0 ]
+      then
+         if [ "`find . -name $bfile -mtime +1`" = "" ]
+         then
+            if [ $uninstall -eq 1 ]
+            then
+               out_progress_line "" "Using cache"
+            else
+               out_progress_line "Using cache" ""
+            fi
+            good_dl=1
+         fi
+      fi
+
+      if [ $good_dl -eq 0 ]
+      then
+         if [ $uninstall -eq 1 ]
+         then
+            out_progress_line "" "Downloading..."
+         else
+            out_progress_line "Downloading..." ""
+         fi
+         if [ "$proxy_site" = "" ]
+         then
+            ( 
+            echo "user anonymous $progname@localhost"
+            echo "binary"
+            echo "get $1 $bfile"
+            echo "quit"
+            ) | ftp -i -n $site >/dev/null 2>&1
+         else
+            ( 
+            echo "user anonymous@$site $progname@localhost"
+            echo "binary"
+            echo "get $1 $bfile"
+            echo "quit"
+            ) | ftp -i -n $proxy_site $proxy_port 2>&1
+         fi
+
+         if [ -s $bfile ]
+         then
+            gzcat $bfile >/dev/null 2>/dev/null
+            if [ $? -eq 0 ]
+            then
+               if [ $uninstall -eq 1 ]
+               then
+                  out_progress_line "" "Downloaded OK"
+               else
+                  out_progress_line "OK" ""
+               fi
+               good_dl=1
+            fi
+         fi 
+
+         if [ $good_dl -eq 0 ]
+         then
+            out_progress_line "FAILED" "Not installed" cr
+            rm -f $bfile
+         fi
+      fi
+   else
+      out_progress_line "No cache dir" "Not installed" cr
+   fi
+}
+
+show_syntax_error()
+# Either bad syntax or requested syntax display
+# $1 = Error message
+{
+   ( echo "$progname: $1"
+     echo
+     echo "Syntax: $progname [options] package[-version] [package[-version]...]"
+     echo
+     echo "Options are as follows:"
+     echo "-a <architecture> specifies the machine architecture (ia64|hppa)"
+     echo "-b <bitness> specifies the bitness of depot downloads (32|64, default 32)"
+     echo "-c <cache directory> specifies the cache directory for downloaded files"
+     echo "-e <expiry_days> set number of days before cache package expiry (default 93)"
+     echo "-f forces depot downloads/installs, even if already downloaded/installed"
+     echo "-h (or -?) displays this syntax message"
+     echo "-l [package[-version]...] lists packages with their dependencies. If no"
+     echo "   parameter is supplied, all installed packages are displayed"
+     echo "-n will download the depots but not install them. If -u is also supplied,"
+     echo "   then a list of depots (including any dependencies) to be uninstalled"
+     echo "   will be displayed rather than actually being uninstalled"
+     echo "-o <version> specifies the depot OS version to download (11.11|11.23|11.31)"
+     echo "-p <host:port> specifies that an FTP proxy server will be used"
+     echo "-r will remove downloaded depots that successfully installed"
+     echo "-u uninstalls the specified packages and if possible, uninstalls"
+     echo "   their dependencies as well"
+     echo
+     echo "If -a/-o don't specify $this_arch/$this_osver, then -n is assumed (i.e. no install)"
+   ) >&2
+   exit 1
+}
+
+store_installed_packages()
+# Cache a list of package-version depots that are already installed
+{
+   # See if we've got a cached list that doesn't need refreshing
+   # because someone has swinstalled/swremoved/swcopy'ed onto this machine
+   if [ -s $installed -a $force -eq 0 ]
+   then
+      if [ $installed -nt $product_index ]
+      then
+         return
+      fi
+   fi
+
+   swlist -a revision 2>/dev/null | grep -v -e '^$' -e '^#$' -e '^  PH' |
+   awk 'BEGIN { gotsep=0; }
+   {
+      if (gotsep) printf("%s-%s\n",$1,$2);
+      else gotsep=match($0,"not contained in a Bundle");
+   }' >$installed
+}
+
+init_vars()
+# Initialise variables for the script to use
+{
+   hostname="`hostname`"
+   expiry_days=93 # Downloaded depots kept 3 months before being expired
+   version="2.10"
+   noinstall=0 ; download_dir=/usr/local/lib/$progname
+   osver="" ; arch=""; proxy=""
+   remove=0 ; force=0 ; list=0 ; uninstall=0
+   this_osver="`uname -r | sed -e 's/B.//g'`"
+   set_arch "`uname -m`" ; this_arch="$arch"
+   osver="" ; arch=""
+   site="hpux.connect.org.uk"
+   proxy_site="" ; proxy_port=""
+   # swremove flags
+   swrmflags="-x verbose=0 -x enforce_dependencies=false"
+   # swinstall flags
+   swflags="$swrmflags -x allow_downdate=true -x allow_incompatible=true -x allow_multiple_versions=true"
+   bitness=32
+
+   if [ "$COLUMNS" = "" ]
+   then
+      cols=80
+   else
+      cols="$COLUMNS"
+   fi
+
+   product_index="/var/adm/sw/products/INDEX"
+   if [ ! -s $product_index ]
+   then
+      error "Can't find installed products index ($product_index)"
+   fi
+}
+
+already_installed()
+# Determine if a specified package is already installed
+# $1 = package[-version]
+# Returns non-null stdout if it is already installed
+{
+   case "$1" in
+   *-*) grep "^$1$" $installed ;;
+     *) grep "^$1-" $installed ;;
+   esac
+}
+
+uninstall_package()
+# Uninstall the specified package
+# $1 = package-version to uninstall (should be installed at the moment)
+{
+   progress_pack="$1"
+   if [ $noinstall -eq 1 ]
+   then
+      out_progress_line "" "Skipped uninst. (req.)" cr
+      good_uninstall=1
+      return
+   fi
+
+   good_uninstall=0
+   if [ $force -eq 0 -a "`already_installed $1`" = "" ]
+   then
+      out_progress_line "" "Skipped uninst. (not installed)" cr
+      good_uninstall=1
+      return
+   fi
+   out_progress_line "" "Uninstalling..."
+   packname="`echo $1 | cut -d- -f1`"
+   packver="`echo $1 | cut -d- -f2`"
+   # Note that we want to mention a specific version of the package when
+   # calling swremove in case 2 or more versions are installed
+   swremove $swrmflags $packname,r=$packver >/dev/null 2>&1
+
+   # We don't trust the return code ($?) here, so re-cache
+   # the installed package list and check that instead
+   store_installed_packages
+   if [ "`already_installed $1`" = "" ]
+   then
+      out_progress_line "" "OK" cr
+      good_uninstall=1
+   else
+      out_progress_line "" "FAILED" cr
+   fi
+}
+
+install_package()
+# Install the specified package
+# $1 = package-version to install ($download_dir/$1$ext must exist)
+# Note that if there are other versions of the same package
+# already installed, they will be uninstalled first
+# Returns good_install=0 for failure or =1 for success
+{
+   progress_pack="$1"
+   if [ $noinstall -eq 1 ]
+   then
+      out_progress_line "" "Skipped (req.)" cr
+      good_install=1
+      return
+   fi
+
+   if [ $force -eq 0 -a "`already_installed $1`" != "" ]
+   then
+      out_progress_line "" "Already installed" cr
+      good_install=1
+      return
+   fi
+
+   # See if we can uninstall all packages with the same name first
+   # (from oldest to newest), except for this version
+   pname="`echo $1 | cut -d- -f1`"
+   otherpack="`already_installed $pname | grep -v ^$1$`"
+   if [ "$otherpack" != "" ]
+   then
+      old_progress_comment="$progress_comment"
+      old_progress_download="$progress_download"
+      progress_comment="Uninstall old ver."
+      progress_download="N/A"
+      for progress_pack in `echo $otherpack`
+      do
+         uninstall_package $progress_pack
+         # Ignore any errors from uninstallations, we're going to
+         # install a new version of this package anyway
+      done
+      progress_pack="$1"
+      progress_comment="$old_progress_comment"
+      progress_download="$old_progress_download"
+   fi
+
+   good_install=0
+   bname=$1-$ext
+   unpack=/tmp/`basename $bname .gz`
+   orgfile=$download_dir/$bname
+
+   if [ -s $orgfile ]
+   then
+      gzcat $orgfile >$unpack
+      if [ -s $unpack ]
+      then
+         out_progress_line "" "Installing..."
+         swinstall $swflags -s $unpack '*' >/dev/null 2>&1
+
+         # We don't trust the return code ($?) here, so re-cache
+         # the installed package list and check that instead
+         store_installed_packages
+         if [ "`already_installed $1`" != "" ]
+         then
+            if [ $remove -eq 1 -a $noinstall -eq 0 ]
+            then
+               rm -f $download_dir/$1$ext
+               out_progress_line "" "OK (+ deleted depot)" cr
+            else
+               out_progress_line "" "OK" cr
+            fi
+            good_install=1
+         fi
+      fi
+      rm -f $unpack
+   fi
+
+   if [ $good_install -eq 0 ]
+   then
+      out_progress_line "" "FAILED" cr
+   fi
+}
+
+list_packages()
+# List all installed packages (if $1="") and their dependencies
+# $1 = "" for all packages, != "" for packages to list
+{
+   equals
+   echo "Package-version     Run-time dependencies"  
+   equals
+   (
+      if [ "$1" = "" ]
+      then
+         while read packver
+         do
+            gzcat $plist | grep "^$packver|"
+         done <$installed
+      else
+         for eachpack in $*
+         do
+            case "$eachpack" in
+            *-*) gzcat $plist | grep "^$eachpack|" ;;
+              *) gzcat $plist | grep "^$eachpack-" | tail -1 ;;
+            esac
+         done
+      fi
+   ) | sort -u |
+   awk -F'|' '
+   function start_line(start_str)
+   {
+      pos=21; printf("%*s ",2-pos,start_str);
+   }
+   {
+      start_line($1);
+      n=split($3,a," ");
+      if (n)
+      {
+         addpos=14;
+         for (b=1;b<=n;b++)
+         {
+            if (pos+addpos>=cols)
+            {
+               printf("\n"); start_line("");
+            }
+            printf("%*s ",1-addpos,a[b]); pos+=addpos;
+         }
+      } else printf("None");
+      printf("\n");
+   }' cols="$cols"
+   equals
+}
+
+download_package_list()
+# Get a list of package-version packages available for $arch_$bitness-$osver
+{
+   bplist=packages-${arch}_${bitness}-$osver.gz
+   plist=$download_dir/$bplist
+   ftp_file /$progname/$bplist "${arch}_${bitness}-$osver" "Package list"
+   if [ $good_dl -eq 0 ]
+   then
+      error "Can't get list of ${arch}_${bitness}-$osver packages from $site"
+   else
+      out_progress_line "" "OK" cr
+   fi
+
+   # At this point, look for the latest depothelper version and
+   # re-execute script with original params if the download is newer
+   late_line="`gzcat $plist | grep ^$progname- | tail -1`"
+}
+
+obsoletion_warning()
+# Warn if depothelper no longer exists on the archive
+{
+   if [ "$late_line" = "" ]
+   then
+      echo "WARNING: $progname is no longer on the HP-UX archive!" >&2
+      echo "         It's either been renamed or deleted" >&2
+   fi
+}
+
+download_packages()
+# Download a set of packages
+# $1 = List of packages with \n terminators
+# $2 = Download comment
+# $3 = 0 for parents, 1 for dependencies
+{
+   if [ "$1" != "" ]
+   then
+      numdone=0
+      totdown="`echo $1 | awk 'END { print NR-1; }'`"
+      dlist="`echo $1 | sort -u`"
+      for eachpack in `echo $dlist`
+      do
+         pdir="`gzcat $plist | grep \"^$eachpack|\" | cut -d'|' -f2`"
+         let numdone=$numdone+1
+         if [ $totdown -gt 1 ]
+         then
+            comm_add=" (`printf \"%02d/%02d\" $numdone $totdown`)"
+         else
+            comm_add=""
+         fi
+         ftp_file $pdir/$eachpack/$eachpack-$ext $eachpack "$2$comm_add"
+         if [ $good_dl -eq 0 ]
+         then
+            if [ $3 -eq 1 ]
+            then
+               cant_continue
+            fi
+         else
+            install_package $eachpack
+            if [ $good_install -eq 0  -a $3 -eq 1 ]
+            then
+               cant_continue
+            fi
+         fi
+      done
+   fi
+}
+
+show_heading()
+# Display heading
+{
+   equals
+   if [ $uninstall -eq 1 ]
+   then
+      printf "%-20s %-20s %s\n" "Package-version" "Comment" "Uninstall"
+   else
+      printf "%-20s %-20s %-15s %s\n" "Package-version" "Comment" "Download" "Install"
+   fi
+   equals
+   in_heading=1
+}
+
+get_parents()
+# $1 = package-version to get parent list
+# $2 = Optional list of other dependencies that will be uninstalled
+# Returns first parent in $orphan and number of parents in $num_parents
+{
+   pname="`echo $1 | cut -d- -f1`"
+   parents="`gzcat $plist | grep \" $pname \" | cut -d'|' -f1 | cut -d- -f1 | sort -u`"
+   orphan="" ; num_parents=0
+   if [ "$parents" != "" ]
+   then
+      for each_parent in $parents
+      do
+         if [ "`echo \" $package_list $2 \" | egrep \" $each_parent( |-)\"`" = "" ]
+         then
+            if [ "`already_installed $each_parent`" != "" ]
+            then
+               let num_parents=$num_parents+1
+               if [ "$orphan" = "" ]
+               then
+                  orphan="$each_parent"
+               fi
+            fi
+         fi
+      done
+   fi
+}
+
+add_parent_and_deps()
+# Add parent package $fullpack to download list and also its
+# dependencies ($pline contains package list line)
+{
+   download_list="$download_list$fullpack\n"
+   deplist="`echo \"$pline\" | cut -d'|' -f3`"
+   if [ "$deplist" != "" ]
+   then
+      for eachdep in $deplist
+      do
+         case "$eachdep" in
+         *-*) depline="`gzcat $plist | grep \"^$eachdep|\"`" ;;
+           *) depline="`gzcat $plist | grep ^$eachdep- | tail -1`" ;;
+         esac
+         fulldep="`echo $depline | cut -d'|' -f1`"
+
+         if [ $force -eq 1 ]
+         then
+            add_this_dep=1
+         else
+            add_this_dep=0
+            if [ "`already_installed $fulldep`" = "" ]
+            then
+               if [ $uninstall -eq 0 ]
+               then
+                  add_this_dep=1
+               fi
+            else
+               if [ $uninstall -eq 1 ]
+               then
+                  get_parents $fulldep "`echo $deps_list` $deplist"
+                  if [ $num_parents -eq 0 ]
+                  then
+                     add_this_dep=1
+                  fi
+               fi
+            fi
+         fi
+
+         if [ $add_this_dep -eq 1 ] 
+         then
+            deps_list="$deps_list$fulldep\n"
+         fi
+      done
+   fi
+}
+
+get_download_list()
+# Construct a list of packages to download/install
+{
+   download_list="" ; deps_list=""
+   for each_package in $package_list
+   do
+      progress_pack="$each_package"
+      progress_comment="Install request"
+      case "$each_package" in
+      *-*) pline="`gzcat $plist | grep \"^$each_package|\"`" ;;
+        *) pline="`gzcat $plist | grep ^$each_package- | tail -1`" ;;
+      esac
+      if [ "$pline" = "" ]
+      then
+         out_progress_line "Not found" "Skipped" cr
+      else
+         fullpack="`echo $pline | cut -d'|' -f1`"
+         progress_pack="$fullpack"
+         if [ $force -eq 1 -o "`already_installed $fullpack`" = "" ]
+         then
+            add_parent_and_deps
+         else
+            out_progress_line "Not downloaded" "Already installed" cr
+         fi
+      fi
+   done
+
+   if [ "$download_list$deps_list" != "" ]
+   then
+      download_packages "$deps_list"     "Dependency" 1
+      download_packages "$download_list" "Requested " 0
+   fi
+}
+
+uninstall_packages()
+# Uninstall the list of packages passed
+# $1 = List of packages with \n terminators
+# $2 = Uninstall comment
+# $3 = 0 for parents, 1 for dependencies
+{
+   if [ "$1" != "" ]
+   then
+      numdone=0
+      totun="`echo $1 | awk 'END { print NR-1; }'`"
+      dlist="`echo $1 | sort -u`"
+      for eachpack in `echo $dlist`
+      do
+         let numdone=$numdone+1
+         if [ $totun -gt 1 ]
+         then
+            comm_add=" (`printf \"%02d/%02d\" $numdone $totun`)"
+         else
+            comm_add=""
+         fi
+         progress_comment="$2$comm_add"
+         uninstall_package $eachpack
+         if [ $good_uninstall -eq 0 -a $3 -eq 1 ]
+         then
+            cant_continue
+         fi
+      done
+   fi
+}
+
+get_uninstall_list()
+# Construct a list of packages to uninstall
+{
+   download_list="" ; deps_list=""
+   for each_package in $package_list
+   do
+      progress_pack="$each_package"
+      progress_comment="Uninstall request"
+      case "$each_package" in
+      *-*) fullpack="`grep \"^$each_package$\" $installed`" ;; 
+        *) fullpack="`grep ^$each_package- $installed | tail -1`" ;; 
+      esac
+      if [ "$fullpack" = "" ]
+      then
+         out_progress_line "" "Not installed - skipped" cr
+      else
+         out_progress_line "" "Checking if any parents installed..."
+         get_parents $fullpack ""
+         case "$num_parents" in
+         0) pline="`gzcat $plist | grep \"^$fullpack|\"`"
+            add_parent_and_deps ;;
+         1) out_progress_line "" "$orphan parent installed - skipped" cr ;;
+         *) out_progress_line "" "$num_parents parents installed - skipped" cr ;;
+         esac
+      fi
+   done
+
+   if [ "$download_list$deps_list" != "" ]
+   then
+      uninstall_packages "$download_list" "Requested " 0
+      uninstall_packages "$deps_list"     "Dependency" 1
+   fi
+}
+
+process_packages()
+{
+   # Get the list of packages available for download for the
+   # specified OS and architecture.
+
+   # Format of file (|-separated on one line):
+   # package-version
+   # relative dir to category package is in
+   # flattened list of run-time deps (space separated)
+
+   show_heading
+   download_package_list
+
+   latest="`echo $late_line | cut -d'|' -f1 | cut -d- -f2 | tail -1`"
+   if [ "$latest" != "$version" -a "$latest" != "" ]
+   then
+      fullpack="$progname-$latest"
+      ftp_file `echo $late_line | cut -d'|' -f2`/$fullpack/$fullpack-$ext $fullpack "Upgrade from $version"
+      if [ $good_dl -eq 1 ]
+      then
+         install_package $fullpack
+         if [ $good_install -eq 1 -a $noinstall -eq 0 ]
+         then
+            equals
+            echo "Executing $fullpack with parameters '$origparams'" >&2
+            exec $fullprogname $origparams
+            exit 0
+         fi
+      fi
+      equals
+      echo "Will continue using old version ($version) of $progname" >&2
+      show_heading
+   fi
+
+   if [ $uninstall -eq 1 ]
+   then
+      get_uninstall_list
+   else
+      get_download_list
+   fi
+   equals
+}
+
+expire_packages()
+# Remove packages that are older than $expiry_days days
+{
+   find $download_dir -type f -name '*.gz' -mtime +$expiry_days | sort |
+   while read dlname
+   do
+      echo "`basename $dlname` expired from download cache (>$expiry_days old)"
+      rm -f $dlname
+   done
+}
+
+parse_options()
+# Parse command-line options passed
+# $* = The command-line options passed to the script
+{
+   while [ "$1" != "" ]
+   do
+      case "$1" in
+      -\?|-h) show_syntax_error "Syntax display requested" ;;
+      -a) arch="$2" ; shift ;;
+      -b) bitness="$2" ; shift ;;
+      -c) download_dir="$2" ; shift ;;
+      -e) expiry_days="$1" ; shift ;;
+      -f) force=1 ;;
+      -l) list=1 ;;
+      -n) noinstall=1 ;;
+      -o) osver="$2" ; shift ;;
+      -p) proxy_site="`echo $2 | cut -d: -f1`"
+          proxy_port="`echo $2 | cut -d: -f2`"
+          shift ;;
+      -r) remove=1 ;;
+      -u) uninstall=1 ;;
+      --) shift ; break ;;
+      -*) show_syntax_error "Bad option ($1) supplied" ;;
+       *) break ;;
+      esac
+      shift
+   done
+
+   mkdir -p $download_dir
+   if [ -d $download_dir ]
+   then
+      installed=$download_dir/installed_packages.txt
+      store_installed_packages
+   else
+      error "Can't create download dir ($download_dir)"
+   fi
+
+   if [ $list -eq 1 ]
+   then
+      set_arch "$this_arch"
+      set_osver "$this_osver"
+      ext="$this_arch-$this_osver.depot.gz"
+      download_package_list >/dev/null
+      list_packages $*
+      exit 0
+   fi
+
+   if [ "$1" = "" ]
+   then
+      show_syntax_error "Must specify at least one package[-version]"
+   fi
+
+   package_list="$*"
+
+   if [ "$osver" = "" ]
+   then
+      set_osver "$this_osver"
+   else
+      set_osver "$osver"
+      if [ "$osver" != "$this_osver" ]
+      then
+         noinstall=1
+      fi
+   fi
+
+   if [ "$arch" = "" ]
+   then
+      set_arch "$this_arch"
+   else
+      set_arch "$arch"
+      if [ "$arch" != "$this_arch" ]
+      then
+         noinstall=1
+      fi
+   fi
+
+   if [ "$arch$osver" = "ia6411.11" ]
+   then
+      error "Nice try, but Itanium 11.11 was never released"
+   fi
+
+   if [ "$bitness" = "64" ]
+   then
+      if [ "$arch" = "hppa" ]
+      then
+         error "Sorry, but PA-RISC binary depots are exclusively 32-bit"
+      fi
+
+      echo "WARNING: We're in early days of 64-bit support, so most packages won't be"
+      echo "         available in 64-bit yet. If you can't find what you want in 64-bit,"
+      echo "         we recommend you stick with 32-bit for now. You shouldn't mix 32-bit"
+      echo "         and 64-bit binary depots, particularly if they contain libraries."
+   else
+      if [ "$bitness" = "32" ]
+      then
+         if [ "$archosver" = "ia6411.31" ]
+         then
+            echo "WARNING: Support for 32-bit Itanium on HP-UX 11.31 is deprecated and will end"
+            echo "         on 31st August 2018. On that date, all 32-bit Itanium HP-UX 11.31"
+            echo "         binary depots be deleted from the http://hpux.connect.org.uk/ site"
+            echo "         and you should download the equivalent 64-bit depots instead."
+         fi
+      else
+         error "Please specify bitness as either 32 or 64"
+      fi
+   fi
+
+   ext="${arch}_${bitness}-$osver.depot.gz"
+
+   expire_packages
+   process_packages
+   # Second call to expire_packages is in case "-e 0" is used
+   # (which basically disables caching and should delete any
+   # newly-downloaded depots before exiting)
+   expire_packages
+}
+
+# Need to be privileged to run this script
+in_heading=0
+if [ `id -u` -ne 0 ]
+then
+   error "This script must be run by the superuser (usually root)"
+fi
+
+# Also need to run it on HP-UX (obviously...)
+osname="`uname -s`"
+if [ "$osname" !=  "HP-UX" ]
+then
+   error "This script should be run on HP-UX, not $osname"
+fi
+
+# Finally, we can run the code
+init_vars
+parse_options $origparams
+obsoletion_warning
+
+exit 0

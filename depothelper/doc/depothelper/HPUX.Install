@@ -1,0 +1,32 @@
+Package name:     depothelper
+Version number:   2.10
+Original author:  Richard K. Lloyd <richard.lloyd@connectinternetsolutions.com>
+Original URL:     http://hpux.connect.org.uk/hppd/hpux/Sysadmin/depothelper-2.00/
+HP-UX URL:        http://hpux.connect.org.uk/hppd/cgi-bin/search?package=&term=/depothelper-
+License:          GNU General Public License v3
+Build-time deps:  make
+Install tree:     /usr/local
+Report bugs to:   hpux@connect.org.uk
+Tested on:        HP rp3440 running HP-UX 11.31 and
+                  HP rx2660 running HP-UX 11.31
+Purpose:
+Installation and uninstallation helper for archive depots. It can download sets
+of packages and their dependencies (caching them for later use) and then
+install any of them that aren't already installed. This release has support for
+64-bit binary depots.
+Date archived:    Mon 14 Aug 2017
+
+-------------------------------------------------------------------------------
+
+To install (as root):
+
+gmake install
+
+To test (as root):
+
+depothelper -l
+[You may need to specify an FTP proxy server and port with -p
+ to get this to work. If you need to install an FTP proxy server first,
+ we recommend the "ftpproxy" package on our archive. See:
+ http://hpux.connect.org.uk/hppd/cgi-bin/search?package=&term=/ftpproxy-
+]

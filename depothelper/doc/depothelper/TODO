@@ -1,0 +1,11 @@
+* Allow depothelper to run on Linux, but obviously in a limited fashion.
+  It would just be used to download/cache depots and since it can't get
+  a list of installed depots, it would assume that it would need to
+  download all non-cached depots it needs to satisfy a package and its
+  dependencies.
+
+* It's probably not great to rely on a "true" FTP proxy (e.g. ftpproxy)
+  to do proxied downloads. It may be better to look for links, lynx,
+  wget or curl and use one of those in preference to FTP if it's
+  available. The problem with this is that all those programs have
+  multiple dependencies themselves (chicken and egg)...

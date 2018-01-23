@@ -1,0 +1,43 @@
+depothelper 2.10 (C) Connect Internet Solutions Limited 2010-2017
+Written by Richard K. Lloyd <richard.lloyd@connectinternetsolutions.com>
+
+This software is GPLv3-licensed - please see the LICENSE file.
+
+One common problem that a lot of users of our HP-UX archive site have is
+that many packages have multiple dependencies that can be tiresome to
+download and install as separate depots. We did consider a bundle system
+or a remote software depot, but decided against them because they would
+require a large amount of extra filestore to accommodate them.
+
+Instead, this depothelper script was created, which allows root to
+non-interactively download and install a package automatically, including
+any dependencies that are required. This release also allows root to
+uninstalled a set of packages and, if possible, their dependencies as well.
+
+Here's the current syntax message output by "depothelper -?":
+
+Syntax: depothelper [options] package[-version] [package[-version]...]
+
+Options are as follows:
+-a <architecture> specifies the machine architecture (ia64|hppa)
+-b <bitness> specifies the bitness of depot downloads (32|64, default 32)
+-c <cache directory> specifies the cache directory for downloaded files
+-e <expiry_days> set number of days before cache package expiry (default 93)
+-f forces depot downloads/installs, even if already downloaded/installed
+-h (or -?) displays this syntax message
+-l [package[-version]...] lists packages with their dependencies. If no
+   parameter is supplied, all installed packages are displayed
+-n will download the depots but not install them. If -u is also supplied,
+   then a list of depots (including any dependencies) to be uninstalled
+   will be displayed rather than actually being uninstalled
+-o <version> specifies the depot OS version to download (11.11|11.23|11.31)
+-p <host:port> specifies that an FTP proxy server will be used
+-r will remove downloaded depots that successfully installed
+-u uninstalls the specified packages and if possible, uninstalls
+   their dependencies as well
+
+You need to be root on an HP-UX 11.11, 11.23 or 11.31 machine when running
+depothelper. If that machine doesn't have a direct connection to the
+internet, you can use an FTP proxy host and port (-p option) - note that
+this has to be a true FTP proxy (e.g. ftpproxy which is on the HP-UX
+archive) rather than Squid handling ftp:// requests.

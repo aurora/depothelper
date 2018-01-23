@@ -1,0 +1,143 @@
+.TH depothelper 1 ""
+.SH NAME
+
+depothelper \- List, download, install or uninstall HP-UX archive package and dependency depots easily
+
+.SH SYNOPSIS
+
+.B depothelper
+.RB [ -?|-h ]
+.RB [ -a\ architecture ]
+.RB [ -b\ bitness ]
+.RB [ -c\ cache_directory ]
+.RB [ -e\ expiry_days ]
+.RB [ -f ]
+.RB [ -i ]
+.RB [ -l\ [ package[-version]\ [package[-version]...] ]
+.RB [ -n ]
+.RB [ -o\ os_version ]
+.RB [ -p\ ftp_proxy_host:ftp_proxy_port ]
+.RB [ -r ]
+.RB [ -u ]
+.RB package[-version]\ [package[-version]...]
+.SH DESCRIPTION
+.I depothelper
+assists in the listing, download, installation and uninstallation
+of package depots and their
+dependencies from the HP-UX archive. Anything downloaded will be cached
+(for 3 months by default) and the cached version will be used in preference for
+future runs. Similarly, depothelper will skip installing packages if they
+are already installed, although the download cache and installation skip
+can be bypassed if the -f option is supplied.
+.PP
+If depothelper is run on a machine with no direct internet connection,
+then the -p option can specify an FTP proxy host and port, although be
+aware that this should be a "true" FTP proxy (e.g. ftpproxy) and not
+just Squid handling ftp://-style requests.
+.PP
+Multiple packages, with or without their version numbers, can be specified
+on the command line. In this case, all dependencies of all specified packages
+are cumulatively calculated, downloaded and installed via swinstall first,
+followed by the specified packages. The -u option will do the reverse of this
+(i.e. uninstall the parents specified using swremove and then uninstall
+their dependencies, if possible).
+.SH OPTIONS
+The following options are recognised:
+.PP
+.RS
+.TP
+.B  \-? or \-h
+Display a syntax usage message.
+.TP
+.B  \-a architecture
+By default, depothelper will assume that downloaded depots will be for the same
+architecture as the machine on which it is run. If this needs to be overridden,
+"hppa" (PA-RISC) or "ia64" (Itanium 2) can be specified as the preferred
+architecture. If a different architecture from the machine it is run on is
+specified, depothelper will also switch on the -n option (no installation)
+automatically.
+.TP
+.B  \-b bitness
+By default, this release of depothelper will assume that you wish to download
+32-bit binary depots. You can change this "bitness" by specifying 32 or 64,
+but note that only the Itanium HP-UX 11.31 platform will have 64-bit
+binary depots - all PA-RISC platforms will have 32-bit binary depots only.
+A later release of depothelper is likely to change the default to be 64-bit
+on the Itanium HP-UX 11.31 platform and, after 31st August 2018, will no
+longer support Itanium 32-bit binary depot downloads.
+.TP
+.B  \-c cache_directory
+depothelper caches downloaded files in the /usr/local/lib/depothelper directory
+by default. Use this -c option to override the cache directory setting.
+.TP
+.B  \-e expiry_days
+Downloaded depots are usually stored for 93 days (3 months) before being
+deleted. This can be overridden with the -e option and specifying "-e 0" will
+therefore effectively disable the cache.
+.TP
+.B  \-f
+depothelper normally will not download any depot that is cached or install any
+depot that's already installed. However, if -f is supplied, it will always
+download all depots and install them all, regardless of the state of the
+cache or the depots already installed.
+.TP
+.B  \-l [package[-version]...]
+If just the -l option is supplied, depothelper will display a list of
+all installed packages and their dependencies. If one or more packages are
+specified with -l, then those packages and their dependencies will be
+listed, regardless as to whether they are installed or not.
+.TP
+.B  \-n
+Specifying this option will skip the installation of depots i.e. they will
+be downloaded if necessary, but not installed. This is useful if one
+HP-UX box needs to be used to download packages to install another HP-UX
+box (use -a and -o to specify the architecture/OS of the other box if
+it's different). Tip: Make the cache directory available via NFS to
+other machines. That way, when one machine downloads the depots with
+"depothelper -n", the other(s) can install them later on with
+"depothelper" as well.
+If -n and -u are both specified, then a list
+of depots to be uninstalled will be shown instead of uninstalling them.
+.TP
+.B \-o os_version
+By default, depothelper will assume that downloaded depots will be for the same
+OS version as the machine on which it is run. If this needs to be overridden,
+11.11, 11.23 or 11.31 can be specified as the preferred OS version.
+If a different OS version from the machine it is run on is
+specified, depothelper will also switch on the -n option (no installation)
+automatically.
+.TP
+.B  \-p ftp_proxy_host:ftp_proxy_port
+If the machine depothelper is run on doesn't have a direct internet connection,
+then an FTP proxy can be used to download depots. This is specified as
+as an FTP proxy server's host and port, separated by a colin. Please note
+that this should be a "true" FTP proxy server (e.g. ftpproxy)
+and not just Squid handling ftp://-style requests. 
+.TP
+.B  \-r
+Any depot that is successfully installed will have its equivalent cache file
+deleted as well if this option is specified.
+.TP
+.B  \-u
+Using this option will attempt to uninstall the specified packages using
+swremove and, if possible, uninstall their dependencies too. The parent
+packages specified on the command line will be uninstalled first
+and then any dependencies which have none of their parents still installed
+will be uninstalled afterwards.
+If -n and -u are both specified, then a list
+of depots to be uninstalled will be shown instead of uninstalling them.
+.SH RETURN VALUE
+Successful execution of depothelper returns 0, but it fails it will return
+a value of 1, with an appropriate error message sent to stderr.
+.SH WARNINGS
+There may be a bug with the "swlist" command when specified with no options
+on the Itanium 11.23 platform (yes, even with PHCO_38149 installed) - it
+seems to fail to list all the archive depots installed and this in turn may
+cause unnecessary re-installation of some depots on that platform when
+depothelper is run. This doesn't happen on any of the other platforms
+that depothelper supports.
+.PP
+depothelper only currently runs on HP-UX i.e. you can't use, say, Linux to
+download and cache depots with it. This may change in a future release.
+.SH AUTHOR
+Richard K. Lloyd	<richard.lloyd@connectinternetsolutions.com>
